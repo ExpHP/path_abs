@@ -10,12 +10,12 @@
 use std::fmt;
 use std_prelude::*;
 
-use super::{PathArc, PathDir, PathFile, Result};
+use super::{PathArc, PathDir, PathEntry, PathFile, Result};
 
 #[derive(Clone, Eq, Hash, PartialEq, PartialOrd, Ord)]
 /// An absolute ([canonicalized][1]) path that is guaranteed (when created) to exist.
 ///
-/// [1]: https://doc.rust-lang.org/std/path/struct.Path.html?search=#method.canonicalize
+/// [1]: https://doc.rust-lang.org/std/path/struct.Path.html#method.canonicalize
 pub struct PathAbs(pub(crate) PathArc);
 
 impl PathAbs {
@@ -46,7 +46,7 @@ impl PathAbs {
 
     /// Get the parent directory of this path as a `PathDir`.
     ///
-    /// > This does not make aditional syscalls, as the parent by definition must be a directory
+    /// > This does not make additional syscalls, as the parent by definition must be a directory
     /// > and exist.
     ///
     /// # Examples
@@ -169,6 +169,12 @@ impl Deref for PathAbs {
 
     fn deref(&self) -> &PathArc {
         &self.0
+    }
+}
+
+impl Into<PathEntry> for PathAbs {
+    fn into(self) -> PathEntry {
+        PathEntry(self.0)
     }
 }
 

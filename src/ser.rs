@@ -18,7 +18,7 @@ use std::ffi::OsString;
 #[cfg(windows)]
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
 
-use super::{PathAbs, PathArc, PathDir, PathFile};
+use super::{PathAbs, PathArc, PathDir, PathEntry, PathFile, PathSymlink};
 
 macro_rules! map_err { ($res: expr) => {{
     $res.map_err(|err| serde::de::Error::custom(&err.to_string()))
@@ -90,6 +90,25 @@ impl<'de> Deserialize<'de> for PathAbs {
     }
 }
 
+impl Serialize for PathEntry {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.0.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for PathEntry {
+    fn deserialize<D>(deserializer: D) -> Result<PathEntry, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let path = PathArc::deserialize(deserializer)?;
+        map_err!(PathEntry::new(path))
+    }
+}
+
 impl Serialize for PathFile {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -125,6 +144,25 @@ impl<'de> Deserialize<'de> for PathDir {
     {
         let abs = PathAbs::deserialize(deserializer)?;
         PathDir::from_abs(abs).map_err(serde::de::Error::custom)
+    }
+}
+
+impl Serialize for PathSymlink {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+    {
+        self.0.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for PathSymlink {
+    fn deserialize<D>(deserializer: D) -> Result<PathSymlink, D::Error>
+        where
+            D: Deserializer<'de>,
+    {
+        let entry = PathEntry::deserialize(deserializer)?;
+        PathSymlink::from_entry(entry).map_err(serde::de::Error::custom)
     }
 }
 

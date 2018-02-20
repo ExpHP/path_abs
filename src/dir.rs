@@ -12,7 +12,8 @@ use std::io;
 use std_prelude::*;
 
 use super::{Error, Result};
-use super::{PathAbs, PathArc, PathType};
+use super::{PathAbs, PathArc, PathEntry};
+use super::{EntryType, PathType};
 
 #[derive(Clone, Eq, Hash, PartialEq, PartialOrd, Ord)]
 /// A `PathAbs` that is guaranteed to be a directory, with associated methods.
@@ -59,12 +60,12 @@ impl PathDir {
     /// Consume the `PathAbs` validating that the path is a directory and returning `PathDir`. The
     /// directory must exist or `io::Error` will be returned.
     ///
-    /// If the path is actually a file returns `io::ErrorKind::InvalidInput`.
+    /// If the entry cannot be resolved to a directory, returns `io::ErrorKind::InvalidInput`.
     ///
-    /// > This does not call [`Path::cannonicalize()`][1], instead trusting that the input is
+    /// > This does not call [`Path::canonicalize()`][1], instead trusting that the input is
     /// > already a fully qualified path.
     ///
-    /// [1]: https://doc.rust-lang.org/std/path/struct.Path.html?search=#method.canonicalize
+    /// [1]: https://doc.rust-lang.org/std/path/struct.Path.html#method.canonicalize
     ///
     /// # Examples
     /// ```rust
@@ -80,14 +81,47 @@ impl PathDir {
         if abs.is_dir() {
             Ok(PathDir::from_abs_unchecked(abs))
         } else {
-            Err(Error::new(
-                io::Error::new(io::ErrorKind::InvalidInput, "path is not a dir"),
-                "resolving",
-                abs.into(),
-            ))
+            Self::err_from_not_a_dir(abs.into())
         }
     }
 
+//    /// Consume the `PathEntry` validating that the path is a directory and returning `PathDir`.
+//    /// This will resolve symlinks. The directory must exist or `io::Error` will be returned.
+//    ///
+//    /// If the path is not a directory, returns `io::ErrorKind::InvalidInput`.
+//    // NOTE: Disabled for now because I doubt it will pull its weight. Just canonicalize first.
+//    pub fn from_entry(entry: PathEntry) -> Result<PathDir> {
+//        if entry.is_dir() {
+//            // resolve a possible symlink in the last component
+//            Ok(PathFile::from_abs_unchecked(entry.canonicalize()?))
+//        } else {
+//            Self::err_from_not_a_dir(entry.into())
+//        }
+//    }
+
+    /// Consume the `PathEntry` validating that the path is a directory and returning `PathFile`.
+    /// This form does not resolve symlinks. The directory must exist or `io::Error` will be
+    /// returned.
+    ///
+    /// If the entry is not a directory, returns `io::ErrorKind::InvalidInput`.
+    ///
+    /// > This does not call [`Path::canonicalize()`][1], instead trusting that the input is
+    /// > already a fully qualified path.
+    pub fn from_entry_strict(entry: PathEntry) -> Result<PathDir> {
+        if entry.symlink_metadata()?.file_type().is_file() {
+            Ok(PathDir::from_abs_unchecked(PathAbs(entry.0)))
+        } else {
+            Self::err_from_not_a_dir(entry.into())
+        }
+    }
+
+    fn err_from_not_a_dir(path: PathArc) -> Result<PathDir> {
+        Err(Error::new(
+            io::Error::new(io::ErrorKind::InvalidInput, "path is not a dir"),
+            "resolving",
+            path,
+        ))
+    }
 
     #[inline(always)]
     /// Do the conversion _without checking_.
@@ -175,7 +209,9 @@ impl PathDir {
     ///
     /// > **Warning**: because `PathAbs` is the canonicalized path, symlinks are always resolved.
     /// > This means that if the directory contains a symlink you may get a path from a completely
-    /// > _different directory_.
+    /// > _different directory_.  If this behavior is undesirable, see [`list_entries`].
+    ///
+    /// [`list_entries`]: #method.list_entries
     ///
     /// # Examples
     /// ```rust
@@ -205,15 +241,35 @@ impl PathDir {
     /// assert_eq!(expected, result);
     /// # Ok(()) } fn main() { try_main().unwrap() }
     pub fn list(&self) -> Result<ListDir> {
-        let fsread =
-            fs::read_dir(self).map_err(|err| Error::new(err, "reading dir", self.clone().into()))?;
-        Ok(ListDir {
-            dir: self.clone(),
-            fsread: fsread,
-        })
+        let fsread = self.read_dir()?;
+        let dir = self.clone();
+        Ok(ListDir { dir, fsread })
+    }
+
+    /// List the contents of the directory, returning an iterator of `EntryType`s.
+    ///
+    /// In contrast to [`list`], this method will not resolve symlinks; it faithfully produces
+    /// all members of the directory (not including `"."` or `".."`) as paths rooted in that
+    /// directory.
+    ///
+    /// [`list`]: #method.list
+    ///
+    // TODO FIXME example
+    pub fn list_entries(&self) -> Result<ListEntries> {
+        let fsread = self.read_dir()?;
+        let dir = self.clone();
+        Ok(ListEntries { dir, fsread })
+    }
+
+    fn read_dir(&self) -> Result<ReadDir> {
+        fs::read_dir(self).map_err(|err| Error::new(err, "reading dir", self.clone().into()))
     }
 
     /// Remove (delete) the _empty_ directory from the filesystem, consuming self.
+    ///
+    /// This corresponds to [`std::fs::remove_dir`].
+    ///
+    /// [`std::fs::remove_dir`]: https://doc.rust-lang.org/std/fs/fn.remove_dir.html
     ///
     /// # Examples
     /// ```rust
@@ -242,6 +298,10 @@ impl PathDir {
     }
 
     /// Remove (delete) the directory, after recursively removing its contents. Use carefully!
+    ///
+    /// This corresponds to [`std::fs::remove_dir_all`].
+    ///
+    /// [`std::fs::remove_dir_all`]: https://doc.rust-lang.org/std/fs/fn.remove_dir_all.html
     ///
     /// # Examples
     /// ```rust
@@ -321,8 +381,6 @@ impl PathDir {
 
 /// An iterator over `PathType` objects, returned by `PathDir::list`.
 pub struct ListDir {
-    // TODO: this should be a reference...?
-    // Or is this a good excuse to use Arc under the hood everywhere?
     dir: PathDir,
     fsread: fs::ReadDir,
 }
@@ -344,6 +402,32 @@ impl ::std::iter::Iterator for ListDir {
             None => return None,
         };
         Some(PathType::new(entry.path()))
+    }
+}
+
+/// An iterator over `EntryType` objects, returned by `PathDir::list_entries`.
+pub struct ListEntries {
+    dir: PathDir,
+    fsread: fs::ReadDir,
+}
+
+impl ::std::iter::Iterator for ListEntries {
+    type Item = Result<EntryType>;
+    fn next(&mut self) -> Option<Result<EntryType>> {
+        let entry = match self.fsread.next() {
+            Some(r) => match r {
+                Ok(e) => e,
+                Err(err) => {
+                    return Some(Err(Error::new(
+                        err,
+                        "iterating over",
+                        self.dir.clone().into(),
+                    )))
+                }
+            },
+            None => return None,
+        };
+        Some(EntryType::new(entry.path()))
     }
 }
 
@@ -452,10 +536,17 @@ impl Into<PathAbs> for PathDir {
     }
 }
 
+impl Into<PathEntry> for PathDir {
+    /// Downgrades the `PathDir` into a `PathEntry`
+    fn into(self) -> PathEntry {
+        self.0.into()
+    }
+}
+
 impl Into<PathArc> for PathDir {
     /// Downgrades the `PathDir` into a `PathArc`
     fn into(self) -> PathArc {
-        (self.0).0
+        self.0.into()
     }
 }
 

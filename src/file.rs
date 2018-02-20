@@ -11,7 +11,7 @@ use std::io;
 use std_prelude::*;
 
 use super::{Error, Result};
-use super::{FileEdit, FileRead, FileWrite, PathAbs, PathArc};
+use super::{FileEdit, FileRead, FileWrite, PathAbs, PathArc, PathEntry};
 
 #[derive(Clone, Eq, Hash, PartialEq, PartialOrd, Ord)]
 /// a `PathAbs` that was a file at the time of initialization, with associated methods.
@@ -41,10 +41,10 @@ impl PathFile {
     ///
     /// If the path is actually a dir returns `io::ErrorKind::InvalidInput`.
     ///
-    /// > This does not call [`Path::cannonicalize()`][1], instead trusting that the input is
+    /// > This does not call [`Path::canonicalize()`][1], instead trusting that the input is
     /// > already a fully qualified path.
     ///
-    /// [1]: https://doc.rust-lang.org/std/path/struct.Path.html?search=#method.canonicalize
+    /// [1]: https://doc.rust-lang.org/std/path/struct.Path.html#method.canonicalize
     ///
     /// # Examples
     /// ```rust
@@ -60,12 +60,45 @@ impl PathFile {
         if abs.is_file() {
             Ok(PathFile::from_abs_unchecked(abs))
         } else {
-            Err(Error::new(
-                io::Error::new(io::ErrorKind::InvalidInput, "path is not a file"),
-                "resolving",
-                abs.into(),
-            ))
+            Self::err_from_not_a_file(abs.into())
         }
+    }
+
+//    /// Consume the `PathEntry` validating that the path is a file and returning `PathFile`.
+//    /// This will resolve symlinks. The file must exist or `io::Error` will be returned.
+//    ///
+//    /// If the entry cannot be resolved to a file, returns `io::ErrorKind::InvalidInput`.
+//    // NOTE: Disabled for now because I doubt it will pull its weight. Just canonicalize first.
+//    pub fn from_entry(entry: PathEntry) -> Result<PathFile> {
+//        if entry.is_file() {
+//            // resolve a possible symlink in the last component
+//            Ok(PathFile::from_abs_unchecked(entry.canonicalize()?))
+//        } else {
+//            Self::err_from_not_a_file(entry.into())
+//        }
+//    }
+
+    /// Consume the `PathEntry` validating that the path is a file and returning `PathFile`.
+    /// This form does not resolve symlinks. The file must exist or `io::Error` will be returned.
+    ///
+    /// If the entry is not a file, returns `io::ErrorKind::InvalidInput`.
+    ///
+    /// > This does not call [`Path::canonicalize()`][1], instead trusting that the input is
+    /// > already a fully qualified path.
+    pub fn from_entry_strict(entry: PathEntry) -> Result<PathFile> {
+        if entry.symlink_metadata()?.file_type().is_file() {
+            Ok(PathFile::from_abs_unchecked(PathAbs(entry.0)))
+        } else {
+            Self::err_from_not_a_file(entry.into())
+        }
+    }
+
+    fn err_from_not_a_file(path: PathArc) -> Result<PathFile> {
+        Err(Error::new(
+            io::Error::new(io::ErrorKind::InvalidInput, "path is not a file"),
+            "resolving",
+            path,
+        ))
     }
 
     #[inline(always)]
@@ -316,9 +349,9 @@ impl PathFile {
         Ok(PathFile::new(path)?)
     }
 
-    /// Rename a file, replacing the original file if `to` already exists.
+    /// Rename (move) a file, replacing the original file if `to` already exists.
     ///
-    /// This will not work if the new name is on a different mount point.
+    /// This will not work if the new name is on a different filesystem.
     ///
     /// # Examples
     /// ```rust
@@ -538,10 +571,17 @@ impl Into<PathAbs> for PathFile {
     }
 }
 
+impl Into<PathEntry> for PathFile {
+    /// Downgrades the `PathFile` into a `PathEntry`
+    fn into(self) -> PathEntry {
+        self.0.into()
+    }
+}
+
 impl Into<PathArc> for PathFile {
     /// Downgrades the `PathFile` into a `PathArc`
     fn into(self) -> PathArc {
-        (self.0).0
+        self.0.into()
     }
 }
 

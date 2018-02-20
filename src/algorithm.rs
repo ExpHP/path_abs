@@ -1,5 +1,44 @@
+use super::{PathArc, Result};
 use std_prelude::*;
 use std::path::Component;
+
+// FIXME: This needs lots of tests and is probably very wrong.
+/// Canonicalizes a path without making any attempt to resolve the final
+/// component; it need not even exist.
+///
+/// FIXME
+/// Behavior when the final component is "." or ".." is currently unspecified.
+///
+/// Differences from `canonicalize`:
+///
+/// * The final component need not exist.
+/// * Even if the final component exists, it is not followed in the
+///   case that it is a symlink.
+///
+/// Use cases:
+///
+/// * Canonicalizing a path where a file will later be created.
+/// * Safely canonicalizing a path for `rm_rf`, so that if `path` is
+///   a symlink, then the symlink will be deleted rather than its target.
+pub(crate) fn canonicalize_parent(path: &Path) -> Result<PathArc>
+{
+    match split_file_name(path) {
+        None => PathArc::new(path).canonicalize().map(Into::into),
+        Some((parent, name)) => {
+            PathArc::new(parent).canonicalize().map(|p| p.join(name))
+        },
+    }
+}
+
+fn split_file_name(path: &Path) -> Option<(&Path, &::std::ffi::OsStr)>
+{
+    // NOTE: it is in fact possible for `parent` to return `Some` while `file_name` returns `None`;
+    //       try the path `"/.."`.
+    match (path.parent(), path.file_name()) {
+        (Some(parent), Some(name)) => Some((parent, name)),
+        _ => None,
+    }
+}
 
 // NOTE: The `clean_path` function is adapted from rust-lang/rust PR #47363
 //       which is copyright 2018 The Rust Developers, licensed under either

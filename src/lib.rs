@@ -231,19 +231,23 @@ mod algorithm;
 mod arc;
 mod dir;
 mod edit;
+mod entry;
 mod file;
 pub mod open;
 #[cfg(feature = "serialize")]
 mod ser;
+mod symlink;
 mod ty;
 mod write;
 mod read;
 
 pub use abs::PathAbs;
 pub use arc::PathArc;
-pub use dir::{ListDir, PathDir};
+pub use dir::{ListDir, ListEntries, PathDir};
+pub use entry::PathEntry;
 pub use file::PathFile;
-pub use ty::PathType;
+pub use symlink::PathSymlink;
+pub use ty::{EntryType, PathType};
 
 pub use edit::FileEdit;
 pub use write::FileWrite;
@@ -324,7 +328,7 @@ impl Error {
         &self.io_err
     }
 
-    /// Returns the action being performed when this error occured.
+    /// Returns the action being performed when this error occurred.
     pub fn action(&self) -> &str {
         &self.action
     }
