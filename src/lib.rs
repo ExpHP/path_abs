@@ -227,6 +227,7 @@ use std::fmt;
 use std_prelude::*;
 
 mod abs;
+mod algorithm;
 mod arc;
 mod dir;
 mod edit;

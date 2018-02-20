@@ -12,9 +12,9 @@ use std::fs;
 use std::ffi::OsStr;
 use std_prelude::*;
 
+use super::algorithm;
 use super::{Error, Result};
-use abs::PathAbs;
-use dir::{ListDir, PathDir};
+use super::{ListDir, PathAbs, PathDir};
 
 #[derive(Clone, Eq, Hash, PartialEq, PartialOrd, Ord)]
 /// A `PathBuf` that is atomically reference counted and reimplements the `PathBuf`
@@ -114,6 +114,32 @@ impl PathArc {
             .map_err(|err| Error::new(err, "canonicalizing", self.clone()))?;
 
         Ok(PathAbs(PathArc::from(abs)))
+    }
+
+    /// Renders the path absolute by attaching the current directory, if necessary.
+    /// No post-processing is performed.
+    ///
+    /// This may be useful if the path is to be given to another process that may have
+    /// a different working directory.
+    ///
+    /// Furthermore, the pattern `.absolute().clean().abs()` allows for the construction
+    /// of a `PathAbs` using different semantics for embedded `".."` components (similar
+    /// to many Unix shell `cd` implementations).
+    pub fn absolute(&self) -> Result<PathArc> {
+        match self.0.is_absolute() {
+            true => Ok(self.clone()),
+            false => PathDir::current_dir().map(|cwd| cwd.join(&*self.0)),
+        }
+    }
+
+    /// Clean a path by eliminating redundant "." components, normalizing
+    /// path separators and removing "subdir/.." pairs.
+    ///
+    /// This is a purely lexical transformation which ignores the filesystem.
+    /// If the original path contained symlinks in it, the input and output
+    /// paths may resolve to different locations in the filesystem.
+    pub fn clean(&self) -> PathArc {
+        PathArc::from(algorithm::clean_path(&self.0))
     }
 
     /// Reads a symbolic link, returning the file that the link points to.
